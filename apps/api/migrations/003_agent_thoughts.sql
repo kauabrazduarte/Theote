@@ -1,0 +1,1 @@
+ALTER TABLE npc_decisions ADD COLUMN IF NOT EXISTS thought text NOT NULL DEFAULT '';

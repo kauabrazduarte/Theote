@@ -1,0 +1,10 @@
+node_modules/
+dist/
+apps/api/.env
+apps/api/.env.*
+!apps/api/.env.example
+.DS_Store
+*.tsbuildinfo
+.aws
+.agents/
+.codex/

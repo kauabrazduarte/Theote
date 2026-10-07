@@ -1,0 +1,128 @@
+[
+  {
+    "id": "casa-1",
+    "number": "1",
+    "center": [
+      -10,
+      -8
+    ],
+    "size": [
+      6.2,
+      5.7
+    ],
+    "entrance": [
+      -10,
+      -5.72
+    ],
+    "roof": "#8b4f3e",
+    "wall": "#c9b78f"
+  },
+  {
+    "id": "casa-2",
+    "number": "2",
+    "center": [
+      10,
+      9.5
+    ],
+    "size": [
+      6.2,
+      5.7
+    ],
+    "entrance": [
+      10,
+      11.78
+    ],
+    "roof": "#687d55",
+    "wall": "#d1c29d"
+  },
+  {
+    "id": "casa-3",
+    "number": "3",
+    "center": [
+      -10,
+      9.5
+    ],
+    "size": [
+      6.2,
+      5.7
+    ],
+    "entrance": [
+      -10,
+      11.78
+    ],
+    "roof": "#816b59",
+    "wall": "#cfbd9b"
+  },
+  {
+    "id": "casa-4",
+    "number": "4",
+    "center": [
+      10,
+      -8
+    ],
+    "size": [
+      6.2,
+      5.7
+    ],
+    "entrance": [
+      10,
+      -5.72
+    ],
+    "roof": "#5e766b",
+    "wall": "#c6b89a"
+  },
+  {
+    "id": "casa-5",
+    "number": "5",
+    "center": [
+      -23,
+      -8
+    ],
+    "size": [
+      6.2,
+      5.7
+    ],
+    "entrance": [
+      -23,
+      -5.72
+    ],
+    "roof": "#997060",
+    "wall": "#d6b7a0"
+  },
+  {
+    "id": "casa-6",
+    "number": "6",
+    "center": [
+      22,
+      9.5
+    ],
+    "size": [
+      6.2,
+      5.7
+    ],
+    "entrance": [
+      22,
+      11.78
+    ],
+    "roof": "#7b8a6d",
+    "wall": "#d0c4aa"
+  },
+  {
+    "id": "casa-7",
+    "number": "7",
+    "center": [
+      22,
+      -8
+    ],
+    "size": [
+      6.2,
+      5.7
+    ],
+    "entrance": [
+      22,
+      -5.72
+    ],
+    "roof": "#8b8066",
+    "wall": "#c5baa2"
+  }
+]

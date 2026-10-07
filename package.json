@@ -1,0 +1,11 @@
+{
+  "name": "theote",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "db:up": "docker compose --env-file apps/api/.env up -d --wait",
+    "dev": "bun run db:up && concurrently -k -n api,web -c cyan,green 'bun run --cwd apps/api dev' 'bun run --cwd apps/world dev'",
+    "build": "bun --filter @theote/world build"
+  },
+  "devDependencies": { "concurrently": "^9.1.2" }
+}

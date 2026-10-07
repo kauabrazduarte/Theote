@@ -1,0 +1,14 @@
+{
+  "name": "@theote/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "reset": "bun src/reset.ts"
+  },
+  "dependencies": {
+    "@theote/npcs": "workspace:*",
+    "postgres": "^3.4.5"
+  }
+}

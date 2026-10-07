@@ -1,0 +1,184 @@
+[
+  {
+    "id": "casa-1",
+    "name": "Casa 1",
+    "x": -10,
+    "z": -5.1,
+    "description": "Entrada da casa de Ka"
+  },
+  {
+    "id": "casa-2",
+    "name": "Casa 2",
+    "x": 10,
+    "z": 13.1,
+    "description": "Entrada da casa de Ra"
+  },
+  {
+    "id": "casa-3",
+    "name": "Casa 3",
+    "x": -10,
+    "z": 13.1,
+    "description": "Entrada da casa de Ba"
+  },
+  {
+    "id": "casa-4",
+    "name": "Casa 4",
+    "x": 10,
+    "z": -5.1,
+    "description": "Entrada da casa de Ni"
+  },
+  {
+    "id": "poco",
+    "name": "Poço",
+    "x": 3,
+    "z": 6.2,
+    "description": "Lado leste do poço coberto"
+  },
+  {
+    "id": "lago",
+    "name": "Lago",
+    "x": 0.5,
+    "z": -11.2,
+    "description": "Margem sul do lago, fora da água"
+  },
+  {
+    "id": "horta",
+    "name": "Horta",
+    "x": -15,
+    "z": 6.7,
+    "description": "Portão da horta comunitária"
+  },
+  {
+    "id": "galinheiro",
+    "name": "Galinheiro",
+    "x": -3.8,
+    "z": 15.3,
+    "description": "Portão do cercado das galinhas"
+  },
+  {
+    "id": "pasto",
+    "name": "Pasto",
+    "x": 15,
+    "z": -18.1,
+    "description": "Portão do pasto com animais"
+  },
+  {
+    "id": "pomar",
+    "name": "Pomar",
+    "x": -15.5,
+    "z": 10.5,
+    "description": "Entre as árvores frutíferas no lado oeste"
+  },
+  {
+    "id": "roda-dagua",
+    "name": "Roda-d’água",
+    "x": -3.7,
+    "z": -11.3,
+    "description": "Margem ao lado da roda-d’água"
+  },
+  {
+    "id": "arvore-norte",
+    "name": "Árvore do norte",
+    "x": -11.2,
+    "z": -17.5,
+    "description": "Ao lado da árvore grande na borda norte"
+  },
+  {
+    "id": "arvore-leste",
+    "name": "Árvore do leste",
+    "x": 17,
+    "z": -7,
+    "description": "Ao lado da árvore no lado leste do vale"
+  },
+  {
+    "id": "arvore-pomar",
+    "name": "Árvore do pomar",
+    "x": -17.2,
+    "z": 10.1,
+    "description": "À sombra de uma árvore frutífera"
+  },
+  {
+    "id": "banco",
+    "name": "Banco da vila",
+    "x": -5.7,
+    "z": -0.7,
+    "description": "Perto do banco de madeira"
+  },
+  {
+    "id": "banca",
+    "name": "Banca do vale",
+    "x": -3,
+    "z": 4,
+    "description": "Catálogo de cinquenta alimentos e bebidas"
+  },
+  {
+    "id": "largo",
+    "name": "Largo da vila",
+    "x": 0,
+    "z": 0,
+    "description": "Encontro dos caminhos da vila"
+  },
+  {
+    "id": "casa-5",
+    "name": "Casa 5",
+    "x": -23,
+    "z": -3.9,
+    "description": "Entrada da casa de Na"
+  },
+  {
+    "id": "casa-6",
+    "name": "Casa 6",
+    "x": 22,
+    "z": 13.1,
+    "description": "Entrada da casa de An"
+  },
+  {
+    "id": "casa-7",
+    "name": "Casa 7",
+    "x": 22,
+    "z": -5.1,
+    "description": "Entrada da casa de Sa"
+  },
+  {
+    "id": "mirante",
+    "name": "Mirante da muralha",
+    "x": -26,
+    "z": -25,
+    "description": "Vista dos caminhos além da muralha e marcas para investigar"
+  },
+  {
+    "id": "pedras",
+    "name": "Círculo de pedras",
+    "x": -26,
+    "z": 9,
+    "description": "Pedras antigas com inscrições para investigar"
+  },
+  {
+    "id": "ruinas",
+    "name": "Ruínas de Cesar",
+    "x": 2,
+    "z": 25,
+    "description": "Restos de uma construção antiga para investigar"
+  },
+  {
+    "id": "clareira",
+    "name": "Clareira dos vaga-lumes",
+    "x": 24,
+    "z": 24,
+    "description": "Uma clareira calma para observar e investigar"
+  },
+  {
+    "id": "oficina",
+    "name": "Oficina antiga",
+    "x": -5,
+    "z": -25,
+    "description": "Bancada abandonada para investigar"
+  },
+  {
+    "id": "duende",
+    "name": "Duende acorrentado",
+    "x": -19.7,
+    "z": 23.8,
+    "description": "Ponto seguro para conversar com o duende; a corrente e a barreira impedem uma aproximação maior"
+  }
+]
