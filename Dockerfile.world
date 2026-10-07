@@ -1,0 +1,16 @@
+FROM oven/bun:1.2.22-alpine AS build
+WORKDIR /app
+COPY package.json bun.lock ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/world/package.json apps/world/package.json
+COPY packages/npcs/package.json packages/npcs/package.json
+RUN bun install --frozen-lockfile
+COPY apps/world apps/world
+COPY packages/npcs packages/npcs
+RUN bun run build
+
+FROM nginx:1.27-alpine
+COPY --from=build /app/apps/world/dist /usr/share/nginx/html
+COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV API_UPSTREAM=http://theote-api.148.113.202.196.sslip.io NGINX_ENVSUBST_FILTER=API_UPSTREAM
+EXPOSE 80

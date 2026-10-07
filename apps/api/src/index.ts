@@ -53,7 +53,8 @@ async function getUsage(url:URL) {
   return {period,reportStartedAt,filters:filters[0],daily,characters,models,budget:await getBudgetStatus()};
 }
 
-const server=Bun.serve({hostname:'127.0.0.1',port,websocket:{
+const hostname=process.env.HOST??'127.0.0.1';
+const server=Bun.serve({hostname,port,websocket:{
   open(ws){addClient(ws);void getState().then(state=>ws.send(JSON.stringify({type:'state',payload:state}))).catch(()=>{});},
   close(ws){removeClient(ws);},
   message(){},
@@ -105,6 +106,6 @@ const server=Bun.serve({hostname:'127.0.0.1',port,websocket:{
 
 const realtimeState=setInterval(()=>void getState().then(state=>broadcast('state',state)).catch(error=>console.error('[Theote] estado em tempo real:',error instanceof Error?error.message:'erro')),1000);
 
-console.info(`[Theote] API pronta em http://127.0.0.1:${server.port}`);
+console.info(`[Theote] API pronta em http://${hostname}:${server.port}`);
 const shutdown=()=>{clearInterval(realtimeState);stopScheduler();void db.end();server.stop();};
 process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
