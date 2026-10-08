@@ -144,13 +144,23 @@ export async function updateSimulation() {
 }
 
 export async function startScheduler() {
+  let stopped=false;
+  let retryTimer:ReturnType<typeof setTimeout>;
+  let stopActive=()=>{};
+  const scheduleRetry=()=>{if(!stopped)retryTimer=setTimeout(()=>void tryStart().catch(error=>{console.error('[Theote] retomada do ciclo:',error);scheduleRetry();}),5000);};
+  const tryStart=async()=>{
   const lock=await db.reserve();
   const [{locked}]=await lock`SELECT pg_try_advisory_lock(480018) AS locked`;
-  if(!locked){lock.release();console.info('[Theote] Outro processo já está executando os ciclos dos moradores.');return()=>{};}
+  if(!locked){
+    lock.release();
+    console.info('[Theote] Outro processo está executando os ciclos; nova tentativa em 5 segundos.');
+    scheduleRetry();
+    return;
+  }
+  if(stopped){void lock`SELECT pg_advisory_unlock(480018)`.finally(()=>lock.release());return;}
   console.info(`[Theote] Ciclo de mundo iniciado. IA ${schedulerReady()?'habilitada':'pausada até configurar chave e orçamento'}.`);
   const movement=setInterval(()=>void updateSimulation().catch(error=>console.error('[Theote] simulação:',error)),1000);
   let timeout:ReturnType<typeof setTimeout>;
-  let stopped=false;
   const nextDecision=async()=>{
     if(stopped)return;
     if(schedulerReady()) {
@@ -180,5 +190,8 @@ export async function startScheduler() {
     timeout=setTimeout(nextDecision,pending?100:Number.isFinite(wakeDelay)?Math.max(250,Math.min(regularDelay,wakeDelay*1000)):regularDelay);
   };
   void updateSimulation();void nextDecision();
-  return()=>{stopped=true;clearInterval(movement);clearTimeout(timeout);void lock`SELECT pg_advisory_unlock(480018)`;lock.release();};
+  stopActive=()=>{clearInterval(movement);clearTimeout(timeout);void lock`SELECT pg_advisory_unlock(480018)`.finally(()=>lock.release());};
+  };
+  await tryStart();
+  return()=>{stopped=true;clearTimeout(retryTimer);stopActive();};
 }
