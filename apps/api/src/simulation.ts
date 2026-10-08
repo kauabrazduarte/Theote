@@ -110,14 +110,17 @@ export async function updateSimulation() {
     for(const wait of dueConversations) {
       const [reply]=await db`SELECT id FROM dialogue_messages WHERE id>${wait.message_id} AND from_npc_id<>${wait.sender_id} AND participants @> ${db.json([wait.sender_id])} AND ${db.json(wait.participants)} @> jsonb_build_array(from_npc_id) AND (reply_to_message_id IS NULL OR reply_to_message_id=${wait.message_id}) LIMIT 1`;
       if(reply) { await db`UPDATE npc_conversation_waits SET resolved_at=now() WHERE message_id=${wait.message_id} AND resolved_at IS NULL`; continue; }
+      const [attention]=await db`SELECT conversation_response FROM npc_notifications WHERE npc_id=${wait.recipient_id} AND dialogue_message_id=${wait.message_id} LIMIT 1`;
+      if(attention&&attention.conversation_response===null)continue;
       const [claimed]=await db`UPDATE npc_conversation_waits SET notified_at=now() WHERE message_id=${wait.message_id} AND notified_at IS NULL AND resolved_at IS NULL RETURNING message_id`;
       if(!claimed)continue;
       await new CardialService(wait.sender_id).recordUnanswered(wait.recipient_id,day,Number(wait.message_id));
       const audience=wait.participants.length>=3?'o grupo':wait.recipient_name;
-      await db`INSERT INTO npc_notifications(npc_id,message) VALUES (${wait.sender_id},${`Já se passaram 30 segundos desde que você falou com ${audience}, e ainda não houve resposta. Decida se quer esperar mais, tentar falar outra vez ou ir fazer outra coisa.`})`;
+      const notice=attention?.conversation_response==='ignored'?`${wait.recipient_name} ouviu sua mensagem e escolheu não responder. Você pode respeitar o silêncio ou decidir tentar mais tarde.`:`Você falou com ${audience}, mas não recebeu resposta. Decida se quer esperar, tentar falar outra vez ou seguir com outra coisa.`;
+      await db`INSERT INTO npc_notifications(npc_id,message) VALUES (${wait.sender_id},${notice})`;
       await db`UPDATE npc_state SET next_thought_at=NULL,updated_at=now() WHERE id=${wait.sender_id}`;
       interruptThought(wait.sender_id);
-      broadcast('agent_event',{npcId:wait.sender_id,npcName:wait.sender_name,stage:'conversation_wait',status:'started',outcome:`Já faz 30 segundos que ${wait.recipient_name} não respondeu.`,at:new Date().toISOString()});
+      broadcast('agent_event',{npcId:wait.sender_id,npcName:wait.sender_name,stage:'conversation_wait',status:'started',outcome:notice,at:new Date().toISOString()});
     }
     if(hour===12&&minute<15) {
       const people=await db.begin(async tx=>{
@@ -154,14 +157,15 @@ export async function startScheduler() {
       try {
         await summarizeClosedDays();
         const [person]=await db`SELECT n.id FROM npc_state n
-          WHERE n.mode NOT IN ('sleeping','departed') AND (
-            (n.mode IN ('wandering','resting','waiting') AND (n.next_thought_at IS NULL OR n.next_thought_at<=now()))
+          WHERE n.mode NOT IN ('sleeping','departed') AND (n.next_thought_at IS NULL OR n.next_thought_at<=now()) AND (
+            n.mode IN ('wandering','resting','waiting')
             OR EXISTS (SELECT 1 FROM npc_notifications p WHERE p.npc_id=n.id AND p.delivered_at IS NULL)
           )
           ORDER BY CASE
-            WHEN EXISTS (SELECT 1 FROM npc_notifications p WHERE p.npc_id=n.id AND p.delivered_at IS NULL) THEN 0
-            WHEN n.last_decision_at IS NULL OR n.last_decision_at<now()-interval '15 seconds' THEN 1
-            ELSE 2 END,
+            WHEN n.mode IN ('wandering','resting','waiting') AND EXISTS (SELECT 1 FROM npc_notifications p WHERE p.npc_id=n.id AND p.dialogue_message_id IS NOT NULL AND p.conversation_response IS NULL) THEN 0
+            WHEN EXISTS (SELECT 1 FROM npc_notifications p WHERE p.npc_id=n.id AND p.delivered_at IS NULL) THEN 1
+            WHEN n.last_decision_at IS NULL OR n.last_decision_at<now()-interval '15 seconds' THEN 2
+            ELSE 3 END,
             n.last_decision_at ASC NULLS FIRST LIMIT 1`;
         if(person)await makeDecision(person.id);
       } catch(error) { console.error('[Theote] ciclo de decisão:',error instanceof Error?error.message:'erro desconhecido'); }
@@ -169,7 +173,9 @@ export async function startScheduler() {
     const {min,max}=configuredInterval;
     const regularDelay=min+Math.random()*(max-min);
     const [nextWake]=await db`SELECT EXTRACT(EPOCH FROM (MIN(next_thought_at)-now()))::float8 AS seconds FROM npc_state WHERE next_thought_at>now()`;
-    const [{pending}]=await db`SELECT EXISTS(SELECT 1 FROM npc_notifications p JOIN npc_state n ON n.id=p.npc_id WHERE p.delivered_at IS NULL AND n.mode NOT IN ('sleeping','departed')) AS pending`;
+    const [{pending}]=await db`SELECT EXISTS(SELECT 1 FROM npc_notifications p JOIN npc_state n ON n.id=p.npc_id
+      WHERE n.mode NOT IN ('sleeping','departed') AND (n.next_thought_at IS NULL OR n.next_thought_at<=now())
+      AND (p.delivered_at IS NULL OR p.dialogue_message_id IS NOT NULL AND p.conversation_response IS NULL AND n.mode IN ('wandering','resting','waiting'))) AS pending`;
     const wakeDelay=Number(nextWake?.seconds);
     timeout=setTimeout(nextDecision,pending?100:Number.isFinite(wakeDelay)?Math.max(250,Math.min(regularDelay,wakeDelay*1000)):regularDelay);
   };

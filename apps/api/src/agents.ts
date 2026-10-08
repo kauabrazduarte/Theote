@@ -25,6 +25,7 @@ const EMOTIONS=['neutral','happy','sad','angry','surprised','worried','thinking'
 type Candidate={id:string;action:string;args:Record<string,unknown>;description:string};
 type VisibleAnimal={spec:AnimalSpec;x:number;z:number;flying:boolean;distance:number};
 type Row={id:string;name:string;home_id:string;profile:any;x:number;z:number;goal_x:number|null;goal_z:number|null;goal_person_id:string|null;mode:string;sleep_on_arrival:boolean;emotion:string;stamina:number;hunger:number;thirst:number;coins:number;next_thought_at:Date|string|null};
+type PendingDialogue={id:number;dialogue_message_id:number;from_npc_id:string;to_npc_id:string|null;speaker_name:string;content:string;participants:string[]};
 const bounded=(value:unknown)=>{
   if(typeof value!=='number'||!Number.isFinite(value))throw new Error('A caminhada precisa de coordenadas numéricas válidas.');
   return Math.max(-20,Math.min(20,value));
@@ -53,6 +54,67 @@ function conversationCircle(rows:Row[],npcId:string):Row[] {
 function findPerson(rows:Row[],value:unknown):Row|undefined {
   const requested=safeText(value,24).toLocaleLowerCase('pt-BR');
   return rows.find(row=>row.id.toLocaleLowerCase('pt-BR')===requested||row.name.toLocaleLowerCase('pt-BR')===requested);
+}
+
+async function handlePendingDialogue(self:Row,rows:Row[],pending:PendingDialogue) {
+  const sender=rows.find(person=>person.id===pending.from_npc_id);
+  if(!sender||sender.mode==='departed') {
+    await db`UPDATE npc_notifications SET conversation_response='unavailable',delivered_at=now() WHERE id=${pending.id} AND conversation_response IS NULL`;
+    return;
+  }
+  if(self.mode==='walking'&&self.goal_person_id===sender.id)return;
+  const close=Math.hypot(self.x-sender.x,self.z-sender.z)<=2&&segmentWalkable(self,sender);
+  const {day,hour,minute}=await getWorldClock();
+  if(!close&&hour===12&&minute<15) {
+    await db`UPDATE npc_state SET next_thought_at=now()+interval '3 seconds' WHERE id=${self.id}`;
+    return;
+  }
+  const group=pending.to_npc_id===null;
+  const history=await db`SELECT speaker_name,content FROM dialogue_messages WHERE participants @> ${db.json([self.id,sender.id])} ORDER BY id DESC LIMIT 7`;
+  const choices:DecisionQuestion[]=close?[
+    {id:'reply',instructions:`Responder agora a ${sender.name}: “${safeText(pending.content,220)}”.`,yes:'Tenho algo próprio e relevante a dizer a essa fala.',no:'Não quero responder a essa fala agora.'},
+    {id:'ignore',instructions:`Deixar conscientemente sem resposta a fala de ${sender.name}.`,yes:'Quero encerrar, preservar silêncio ou evitar esta conversa por um motivo meu.',no:'Prefiro responder a essa pessoa.'},
+  ]:[
+    {id:'walk',instructions:`Ir encontrar ${sender.name} para responder à fala pendente.`,yes:'Quero continuar essa conversa e vale a pena ir até a pessoa.',no:'Prefiro não ir atrás dela para responder.'},
+    {id:'ignore',instructions:`Deixar conscientemente sem resposta a fala de ${sender.name}.`,yes:'Não quero procurar essa pessoa ou retomar esta conversa.',no:'Quero tentar falar com ela.'},
+  ];
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(new Error('A atenção à mensagem passou de 45 segundos.')),45_000);
+  activeThoughts.set(self.id,controller);
+  try {
+    const identity=new CardialService(self.id,self.profile.systemPrompt).identityPrompt;
+    const state=`${identity}\nÉ dia ${day}, ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}. ${sender.name} falou com você${group?' numa roda':''}: “${safeText(pending.content,280)}”. Você ouviu a mensagem e precisa escolher o que fazer com ela. Não é obrigatório responder; silêncio deve ser uma escolha consciente, por exemplo se o assunto terminou, você está cansado ou não quer falar com essa pessoa. Se houver algo concreto a acrescentar, responda. Conversa recente, da mais antiga para a mais nova:\n${history.reverse().map(item=>`${item.speaker_name}: ${safeText(item.content,220)}`).join('\n')}. Você está ${close?'perto':'longe'} de ${sender.name}. Fome ${self.hunger.toFixed(2)}%, sede ${self.thirst.toFixed(2)}%.`;
+    const scores=await rankDecisions(self.id,state,choices,controller.signal);
+    controller.signal.throwIfAborted();
+    const action=Number(scores[choices[1].id]??0)>Number(scores[choices[0].id]??0)?choices[1].id:choices[0].id;
+    let outcome:string;
+    if(action==='reply') {
+      await speak(self.id,group&&conversationCircle(rows,self.id).length>=3?null:sender.id,`Responder ao que ${sender.name} disse: ${pending.content}`,false,controller.signal,group?Number(pending.dialogue_message_id):null);
+      outcome=`Respondeu à mensagem de ${sender.name}.`;
+    } else if(action==='walk') {
+      const current=await db<Row[]>`SELECT * FROM npc_state WHERE mode<>'departed' ORDER BY id`;
+      const actor=current.find(person=>person.id===self.id);
+      if(!actor)throw new Error('O morador não está mais disponível.');
+      outcome=await executeAction(actor,current,'walk_to_person',{personId:sender.id},controller.signal);
+    } else outcome=`Escolheu não responder à mensagem de ${sender.name}.`;
+    if(action!=='walk') {
+      await db`UPDATE npc_notifications AS n SET conversation_response=${action==='reply'?'replied':'ignored'},delivered_at=now()
+        FROM dialogue_messages AS m WHERE n.dialogue_message_id=m.id AND n.npc_id=${self.id} AND n.id<=${pending.id}
+        AND n.conversation_response IS NULL AND ((${group} AND m.to_npc_id IS NULL) OR (NOT ${group} AND m.from_npc_id=${sender.id} AND m.to_npc_id=${self.id}))`;
+    } else await db`UPDATE npc_notifications SET delivered_at=now() WHERE id=${pending.id}`;
+    const recordedAction=action==='reply'?'reply_to_message':action==='ignore'?'ignore_message':'walk_to_person';
+    const [saved]=await db`INSERT INTO npc_decisions(npc_id,world_day,action,arguments,outcome) VALUES (${self.id},${day},${recordedAction},${db.json({messageId:pending.dialogue_message_id,personId:sender.id})},${outcome}) RETURNING id`;
+    await db`UPDATE npc_state SET last_decision_at=now(),updated_at=now() WHERE id=${self.id}`;
+    broadcast('agent_event',{eventId:Number(saved.id),npcId:self.id,npcName:self.name,stage:'decision',status:'completed',tool:recordedAction,outcome,at:new Date().toISOString()});
+  } catch(error) {
+    if(controller.signal.aborted&&/Nova mensagem|Atenção: alguém chegou perto/.test(String(controller.signal.reason)))return;
+    const message=safeText(error instanceof Error?error.message:'Falha ao considerar a mensagem.',300);
+    await db`UPDATE npc_state SET next_thought_at=now()+interval '8 seconds' WHERE id=${self.id}`;
+    console.error(`[Theote] atenção à mensagem de ${self.id}: ${message}`);
+  } finally {
+    clearTimeout(timer);
+    if(activeThoughts.get(self.id)===controller)activeThoughts.delete(self.id);
+  }
 }
 
 function actionCandidates(self:Row,rows:Row[],recent:any[],dialogue:any[],hour:number,minute:number,pressure:number,hasNotice:boolean,inventory:Record<string,number>,agreements:any[],explored:Set<string>,invitations:any[],day:number,wildlife:VisibleAnimal[]):Candidate[] {
@@ -158,6 +220,15 @@ function actionCandidates(self:Row,rows:Row[],recent:any[],dialogue:any[],hour:n
 export async function makeDecision(npcId:string) {
   const rows=await db<Row[]>`SELECT * FROM npc_state WHERE mode<>'departed' ORDER BY id`;
   const self=rows.find(row=>row.id===npcId);if(!self)return;
+  if(self.mode==='sleeping')return;
+  const [pendingDialogue]=await db<PendingDialogue[]>`SELECT n.id,n.dialogue_message_id,m.from_npc_id,m.to_npc_id,m.speaker_name,m.content,m.participants
+    FROM npc_notifications n JOIN dialogue_messages m ON m.id=n.dialogue_message_id
+    WHERE n.npc_id=${npcId} AND n.conversation_response IS NULL AND n.dialogue_message_id IS NOT NULL
+    ORDER BY (m.to_npc_id=${npcId}) DESC,n.id DESC LIMIT 1`;
+  if(pendingDialogue) {
+    await handlePendingDialogue(self,rows,pendingDialogue);
+    return;
+  }
   const cardial=new CardialService(npcId,self.profile.systemPrompt);
   const notifications=await db`SELECT id,message FROM npc_notifications WHERE npc_id=${npcId} AND delivered_at IS NULL ORDER BY id LIMIT 8`;
   if(self.next_thought_at&&new Date(self.next_thought_at)>new Date()&&!notifications.length)return;
@@ -417,10 +488,10 @@ async function speak(fromId:string,toId:string|null,topic:string,venting=false,s
   const saved=await db.begin(async tx=>{
     const [message]=await tx`INSERT INTO dialogue_messages(world_day,world_hour,world_minute,from_npc_id,to_npc_id,speaker_name,content,participants,reply_to_message_id) VALUES (${day},${hour},${minute},${fromId},${toId},${speaker.name},${content},${tx.json(participants)},${reply?.id??null}) RETURNING id,created_at`;
     for(const id of participants)await tx`INSERT INTO npc_memory_events(npc_id,kind,subject,summary,importance,world_day) VALUES (${id},'conversation',${participants.join(':')},${`${speaker.name} disse: ${safeText(content,230)}`},1,${day}) ON CONFLICT (npc_id,kind,subject,world_day) DO UPDATE SET summary=EXCLUDED.summary,created_at=now()`;
-    await tx`INSERT INTO npc_conversation_waits(message_id,sender_id,recipient_id,deadline_at) VALUES (${message.id},${fromId},${toId??reply?.from_npc_id??listeners[0].id},now()+interval '30 seconds')`;
+    if(toId||reply)await tx`INSERT INTO npc_conversation_waits(message_id,sender_id,recipient_id,deadline_at) VALUES (${message.id},${fromId},${toId??reply.from_npc_id},now()+interval '30 seconds')`;
     for(const person of listeners) {
       const notice=reply?.from_npc_id===person.id?`${speaker.name} respondeu diretamente à sua mensagem na roda: “${content}”. Mensagem citada: “${reply.content}”.`:circle.length>=3?`${speaker.name} falou na roda, diante de todos: “${content}”. Você pode responder ou seguir com outra coisa.`:`${speaker.name} falou com você: “${content}”. Você pode responder ou seguir com outra coisa.`;
-      await tx`INSERT INTO npc_notifications(npc_id,message) VALUES (${person.id},${notice})`;
+      await tx`INSERT INTO npc_notifications(npc_id,message,dialogue_message_id) VALUES (${person.id},${notice},${toId===null||toId===person.id?message.id:null})`;
       interruptThought(person.id,'Nova mensagem recebida.');
       // The noon gathering is compulsory; hearing someone on the way interrupts
       // the model call but does not erase the scripted trip to the square.
