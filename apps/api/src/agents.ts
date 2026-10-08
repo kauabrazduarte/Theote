@@ -71,9 +71,11 @@ async function handlePendingDialogue(self:Row,rows:Row[],pending:PendingDialogue
   }
   const group=pending.to_npc_id===null;
   const history=await db`SELECT speaker_name,content FROM dialogue_messages WHERE participants @> ${db.json([self.id,sender.id])} ORDER BY id DESC LIMIT 7`;
+  const [{recent_replies:recentReplies}]=await db`SELECT COUNT(*)::int AS recent_replies FROM npc_decisions
+    WHERE npc_id=${self.id} AND action='reply_to_message' AND arguments->>'personId'=${sender.id} AND created_at>=now()-interval '3 minutes'`;
   const choices:DecisionQuestion[]=close?[
-    {id:'reply',instructions:`Responder agora a ${sender.name}: “${safeText(pending.content,220)}”.`,yes:'Tenho algo próprio e relevante a dizer a essa fala.',no:'Não quero responder a essa fala agora.'},
-    {id:'ignore',instructions:`Deixar conscientemente sem resposta a fala de ${sender.name}.`,yes:'Quero encerrar, preservar silêncio ou evitar esta conversa por um motivo meu.',no:'Prefiro responder a essa pessoa.'},
+    {id:'reply',instructions:`Responder agora a ${sender.name}: “${safeText(pending.content,220)}”.`,yes:'Consigo acrescentar um fato, sentimento, discordância ou resposta concreta que ainda não apareceu na conversa.',no:'Eu só repetiria o mesmo plano, pergunta ou concordância.'},
+    {id:'ignore',instructions:`Encerrar conscientemente esta troca sem outra fala com ${sender.name}.`,yes:'O assunto já foi respondido, preciso agir no que combinamos, quero silêncio ou não desejo continuar.',no:'Tenho algo novo e importante a dizer agora.'},
   ]:[
     {id:'walk',instructions:`Ir encontrar ${sender.name} para responder à fala pendente.`,yes:'Quero continuar essa conversa e vale a pena ir até a pessoa.',no:'Prefiro não ir atrás dela para responder.'},
     {id:'ignore',instructions:`Deixar conscientemente sem resposta a fala de ${sender.name}.`,yes:'Não quero procurar essa pessoa ou retomar esta conversa.',no:'Quero tentar falar com ela.'},
@@ -83,10 +85,12 @@ async function handlePendingDialogue(self:Row,rows:Row[],pending:PendingDialogue
   activeThoughts.set(self.id,controller);
   try {
     const identity=new CardialService(self.id,self.profile.systemPrompt).identityPrompt;
-    const state=`${identity}\nÉ dia ${day}, ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}. ${sender.name} falou com você${group?' numa roda':''}: “${safeText(pending.content,280)}”. Você ouviu a mensagem e precisa escolher o que fazer com ela. Não é obrigatório responder; silêncio deve ser uma escolha consciente, por exemplo se o assunto terminou, você está cansado ou não quer falar com essa pessoa. Se houver algo concreto a acrescentar, responda. Conversa recente, da mais antiga para a mais nova:\n${history.reverse().map(item=>`${item.speaker_name}: ${safeText(item.content,220)}`).join('\n')}. Você está ${close?'perto':'longe'} de ${sender.name}. Fome ${self.hunger.toFixed(2)}%, sede ${self.thirst.toFixed(2)}%.`;
+    const state=`${identity}\nÉ dia ${day}, ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}. ${sender.name} falou com você${group?' numa roda':''}: “${safeText(pending.content,280)}”. Você ouviu a mensagem e precisa escolher o que fazer com ela. Não é obrigatório responder; silêncio deve ser uma escolha consciente, por exemplo se o assunto terminou, você está cansado ou não quer falar com essa pessoa. Se vocês já combinaram ir a algum lugar, repetir “vamos” não faz a viagem acontecer: encerre a troca e execute o plano no próximo passo. Você já respondeu ${recentReplies} vez(es) a ${sender.name} nos últimos três minutos. Se houver algo concreto e novo a acrescentar, responda. Conversa recente, da mais antiga para a mais nova:\n${history.reverse().map(item=>`${item.speaker_name}: ${safeText(item.content,220)}`).join('\n')}. Você está ${close?'perto':'longe'} de ${sender.name}. Fome ${self.hunger.toFixed(2)}%, sede ${self.thirst.toFixed(2)}%.`;
     const scores=await rankDecisions(self.id,state,choices,controller.signal);
     controller.signal.throwIfAborted();
-    const action=Number(scores[choices[1].id]??0)>Number(scores[choices[0].id]??0)?choices[1].id:choices[0].id;
+    if(!choices.some(choice=>Number(scores[choice.id]??0)>0))throw new Error('A decisão sobre a conversa não veio completa; a mensagem continua pendente.');
+    const responseMargin=Math.min(0.35,Math.max(0,Number(recentReplies)-1)*0.12);
+    const action=Number(scores[choices[0].id]??0)>Number(scores[choices[1].id]??0)+responseMargin?choices[0].id:choices[1].id;
     let outcome:string;
     if(action==='reply') {
       await speak(self.id,group&&conversationCircle(rows,self.id).length>=3?null:sender.id,`Responder ao que ${sender.name} disse: ${pending.content}`,false,controller.signal,group?Number(pending.dialogue_message_id):null);
