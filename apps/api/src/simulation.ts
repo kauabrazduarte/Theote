@@ -31,7 +31,7 @@ export async function updateSimulation() {
         await db`UPDATE npc_state SET x=${homeX},z=${homeZ+1.4},goal_x=NULL,goal_z=NULL,goal_person_id=NULL,mode='wandering',sleep_on_arrival=false,next_thought_at=NULL,planned_wake_at=NULL,stamina=100,last_wake_day=${day},last_stamina_at=now(),updated_at=now() WHERE id=${npc.id}`;
         continue;
       }
-      if(npc.mode==='resting'&&npc.next_thought_at&&new Date(npc.next_thought_at).getTime()<=now) {
+      if(npc.mode==='resting'&&npc.stamina>5&&npc.next_thought_at&&new Date(npc.next_thought_at).getTime()<=now) {
         const resumed=await db`UPDATE npc_state SET mode='wandering',next_thought_at=NULL,updated_at=now() WHERE id=${npc.id} AND mode='resting' AND next_thought_at<=now() RETURNING id`;
         if(resumed.length)broadcast('agent_event',{npcId:npc.id,npcName:npc.name,stage:'rest',status:'completed',outcome:'Terminou a pausa e pode agir novamente.',at:new Date().toISOString()});
         continue;
@@ -40,10 +40,12 @@ export async function updateSimulation() {
       const elapsedWorldHours=worldHoursAtElapsed(worldElapsed)-worldHoursAtElapsed(Math.max(0,worldElapsed-realDelta));
       let stamina=Math.max(0,Math.min(100,npc.stamina+(npc.mode==='sleeping'?elapsedWorldHours*12.5:-elapsedWorldHours*(100/48))));
       let x=npc.x,z=npc.z,mode=npc.mode,goalX=npc.goal_x,goalZ=npc.goal_z,follow=npc.goal_person_id,sleepOnArrival=npc.sleep_on_arrival;
-      if(stamina<=0&&mode!=='sleeping') {
+      const forcedSleep=stamina<=5&&mode!=='sleeping';
+      let wakeIn=0;
+      if(forcedSleep) {
         [goalX,goalZ]=npc.profile.bedPosition??home[npc.profile.home]??[0,0];mode='walking';follow=null;sleepOnArrival=true;
         const wakeAt=elapsedSecondsForWorldTime(day+(hour>=9?1:0),9);
-        await db`UPDATE npc_state SET next_thought_at=NULL,planned_wake_at=COALESCE(planned_wake_at,now()+(${Math.max(1,wakeAt-worldElapsed)}*interval '1 second')) WHERE id=${npc.id}`;
+        wakeIn=Math.max(1,wakeAt-worldElapsed);
       }
       if(mode==='following'&&follow) {
         const person=rows.find(other=>other.id===follow);
@@ -76,7 +78,14 @@ export async function updateSimulation() {
       const hunger=Math.min(100,npc.hunger+elapsedWorldHours*4+walked*0.0005);
       const thirst=Math.min(100,npc.thirst+elapsedWorldHours*6+walked*0.005);
       const arrived=npc.mode==='walking'&&mode==='wandering'&&goalX===null;
-      const changed=await db`UPDATE npc_state SET x=${x},z=${z},mode=${mode},goal_x=${goalX},goal_z=${goalZ},goal_person_id=${follow},sleep_on_arrival=${sleepOnArrival},stamina=${stamina},hunger=${hunger},thirst=${thirst},next_thought_at=CASE WHEN ${arrived} THEN NULL ELSE next_thought_at END,last_wake_day=${scheduledWake?day:npc.last_wake_day},last_stamina_at=now(),updated_at=now() WHERE id=${npc.id} AND xmin::text=${npc.version} RETURNING id`;
+      const changed=await db`UPDATE npc_state SET x=${x},z=${z},mode=${mode},goal_x=${goalX},goal_z=${goalZ},goal_person_id=${follow},sleep_on_arrival=${sleepOnArrival},stamina=${stamina},hunger=${hunger},thirst=${thirst},next_thought_at=CASE WHEN ${forcedSleep||arrived} THEN NULL ELSE next_thought_at END,
+        planned_wake_at=CASE WHEN ${forcedSleep} THEN COALESCE(planned_wake_at,now()+(${wakeIn}*interval '1 second')) ELSE planned_wake_at END,
+        last_wake_day=${scheduledWake?day:npc.last_wake_day},last_stamina_at=now(),updated_at=now() WHERE id=${npc.id} AND xmin::text=${npc.version} RETURNING id`;
+      if(changed.length&&forcedSleep&&!npc.sleep_on_arrival) {
+        await db`UPDATE npc_notifications SET conversation_response='unavailable',delivered_at=now() WHERE npc_id=${npc.id} AND dialogue_message_id IS NOT NULL AND conversation_response IS NULL`;
+        interruptThought(npc.id,'A energia chegou a 5%; hora de dormir.');
+        broadcast('agent_event',{npcId:npc.id,npcName:npc.name,stage:'movement',status:'started',outcome:'A energia chegou a 5%; está indo dormir.',at:new Date().toISOString()});
+      }
       if(changed.length&&(npc.mode==='walking'||npc.mode==='following')&&(mode==='wandering'||mode==='sleeping')&&goalX===null)broadcast('agent_event',{npcId:npc.id,npcName:npc.name,stage:'movement',status:'completed',outcome:mode==='sleeping'?'Chegou à cama e foi dormir.':'Chegou ao destino.',at:new Date().toISOString()});
     }
     const positions=await db<MovingNpc[]>`SELECT * FROM npc_state WHERE mode<>'departed' ORDER BY id`;
@@ -127,7 +136,7 @@ export async function updateSimulation() {
       const people=await db.begin(async tx=>{
         const claimed=await tx`UPDATE world_state SET meeting_day=${day},updated_at=now() WHERE id=1 AND meeting_day<${day} RETURNING id`;
         if(!claimed.length)return [];
-        const participants=await tx`SELECT id,name FROM npc_state WHERE mode<>'departed' ORDER BY id FOR UPDATE`;
+        const participants=await tx`SELECT id,name FROM npc_state WHERE mode NOT IN ('departed','sleeping') AND stamina>5 AND sleep_on_arrival=false ORDER BY id FOR UPDATE`;
         for(let i=0;i<participants.length;i++){
           const person=participants[i],x=(i-(participants.length-1)/2)*0.7;
           await tx`UPDATE npc_state SET x=${x},z=0,goal_x=NULL,goal_z=NULL,goal_person_id=NULL,mode='wandering',sleep_on_arrival=false,next_thought_at=NULL,updated_at=now() WHERE id=${person.id}`;

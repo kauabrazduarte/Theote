@@ -25,7 +25,7 @@ const EMOTIONS=['neutral','happy','sad','angry','surprised','worried','thinking'
 type Candidate={id:string;action:string;args:Record<string,unknown>;description:string};
 type VisibleAnimal={spec:AnimalSpec;x:number;z:number;flying:boolean;distance:number};
 type Row={id:string;name:string;home_id:string;profile:any;x:number;z:number;goal_x:number|null;goal_z:number|null;goal_person_id:string|null;mode:string;sleep_on_arrival:boolean;emotion:string;stamina:number;hunger:number;thirst:number;coins:number;next_thought_at:Date|string|null};
-type PendingDialogue={id:number;dialogue_message_id:number;from_npc_id:string|null;to_npc_id:string|null;speaker_name:string;content:string;participants:string[]};
+type PendingDialogue={id:number;dialogue_message_id:number;from_npc_id:string|null;to_npc_id:string|null;speaker_name:string;content:string;participants:string[];world_day:number;world_hour:number;world_minute:number};
 const bounded=(value:unknown)=>{
   if(typeof value!=='number'||!Number.isFinite(value))throw new Error('A caminhada precisa de coordenadas numéricas válidas.');
   return Math.max(-20,Math.min(20,value));
@@ -57,6 +57,16 @@ function findPerson(rows:Row[],value:unknown):Row|undefined {
 }
 
 async function handlePendingDialogue(self:Row,rows:Row[],pending:PendingDialogue) {
+  if(self.stamina<=5||self.sleep_on_arrival) {
+    await db`UPDATE npc_notifications SET conversation_response='unavailable',delivered_at=now() WHERE id=${pending.id} AND conversation_response IS NULL`;
+    return;
+  }
+  const clock=await getWorldClock();
+  if(pending.participants.length>=3&&pending.world_hour===12&&
+    (pending.world_day<clock.day||pending.world_day===clock.day&&(clock.hour>12||clock.hour===12&&clock.minute>=15))) {
+    await db`UPDATE npc_notifications SET conversation_response='unavailable',delivered_at=now() WHERE id=${pending.id} AND conversation_response IS NULL`;
+    return;
+  }
   if(pending.speaker_name==='Duende') {
     const controller=new AbortController();
     const timer=setTimeout(()=>controller.abort(new Error('A decisão sobre o duende passou de 25 segundos.')),25_000);
@@ -150,6 +160,7 @@ function actionCandidates(self:Row,rows:Row[],recent:any[],dialogue:any[],hour:n
   const candidates:Candidate[]=[];
   const add=(id:string,action:string,args:Record<string,unknown>,description:string)=>candidates.push({id,action,args,description});
   const meeting=hour===12&&minute<15;
+  const afterMeeting=hour===12&&minute>=15;
   const worldMinute=day*1440+hour*60+minute;
   if(!meeting)for(const invite of invitations.filter(item=>item.response==='accepted'&&!item.travel_decision&&Number(item.target_day)*1440+Number(item.target_hour)*60+Number(item.target_minute)-worldMinute<=15&&worldMinute-(Number(item.target_day)*1440+Number(item.target_hour)*60+Number(item.target_minute))<=10)){
     add(`attend_${invite.id}`,'attend_invitation',{invitationId:Number(invite.id),reason:`Ir ao encontro #${invite.id} em ${invite.site_id}.`},`Ir ao encontro #${invite.id}, em ${invite.site_id}, dia ${invite.target_day} às ${String(invite.target_hour).padStart(2,'0')}:${String(invite.target_minute).padStart(2,'0')}.`);
@@ -178,7 +189,7 @@ function actionCandidates(self:Row,rows:Row[],recent:any[],dialogue:any[],hour:n
   for(const person of nearby) {
     const recentlyAddressed=recent.some(row=>row.action==='say_to_person'&&String(row.arguments?.personId).toLowerCase()===person.id&&Date.now()-new Date(row.created_at).getTime()<45_000);
     const replying=lastDialogue?.from_npc_id===person.id;
-    if(meeting||!conversationTired&&(replying||!recentlyAddressed))add(`talk_${person.id}`,'say_to_person',{personId:person.id,topic:replying?'Reagir ao detalhe mais recente sem saudação, elogio automático nem repetição.':'Falar de algo concreto que está acontecendo agora.',reason:`Conversar com ${person.name}.`},replying?`Responder a ${person.name} sem repetir a ideia: “${safeText(lastDialogue.content,100)}”.`:`Conversar com ${person.name} sobre algo concreto do momento.`);
+    if(meeting||!afterMeeting&&!conversationTired&&(replying||!recentlyAddressed))add(`talk_${person.id}`,'say_to_person',{personId:person.id,topic:replying?'Reagir ao detalhe mais recente sem saudação, elogio automático nem repetição.':'Falar de algo concreto que está acontecendo agora.',reason:`Conversar com ${person.name}.`},replying?`Responder a ${person.name} sem repetir a ideia: “${safeText(lastDialogue.content,100)}”.`:`Conversar com ${person.name} sobre algo concreto do momento.`);
     const askedForCoin=lastDialogue?.from_npc_id===person.id&&/\b(?:me\s+(?:d[áa]|empresta)|pode\s+me\s+dar|preciso\s+de|tem\s+uma?)\b.{0,32}\bmoed/i.test(String(lastDialogue.content));
     const gaveRecently=recent.some(row=>row.action==='give_coin'&&String(row.arguments?.personId).toLowerCase()===person.id&&Date.now()-new Date(row.created_at).getTime()<300_000);
     if(!meeting&&self.coins>0&&askedForCoin&&!gaveRecently)add(`give_${person.id}`,'give_coin',{personId:person.id,amount:1,reason:`Responder ao pedido de ${person.name} por uma moeda.`},`Dar uma moeda a ${person.name}, que acabou de pedir, se você quiser.`);
@@ -199,8 +210,8 @@ function actionCandidates(self:Row,rows:Row[],recent:any[],dialogue:any[],hour:n
     if(ownPlan)for(const person of nearby.filter(person=>ownPlan.participants?.includes(person.id)&&!agreements.some(agreement=>agreement.proposer_id===self.id&&agreement.recipient_id===person.id&&(agreement.status==='proposed'||Date.now()-new Date(agreement.created_at).getTime()<600_000))))
       add(`agreement_${ownPlan.id}_${person.id}`,'propose_agreement',{personId:person.id,messageId:Number(ownPlan.id),reason:`Convidar ${person.name} a firmar por escrito o plano que acabei de dizer.`},`Propor a ${person.name} um acordo escrito com o plano da sua fala: “${safeText(ownPlan.content,180)}”. Só ficará firmado se ela/ele aceitar.`);
   }
-  if(circle.length>=3&&(meeting||!conversationTired))add('group','say_to_group',{topic:'Dizer algo próprio e concreto à roda, sem repetir uma proposta já discutida.',reason:'Participar da conversa com todos.'},'Falar para a roda com uma posição própria, uma resposta específica ou uma observação do momento.');
-  if(circle.length>=3&&(meeting||!conversationTired)){
+  if(circle.length>=3&&(meeting||!afterMeeting&&!conversationTired))add('group','say_to_group',{topic:'Dizer algo próprio e concreto à roda, sem repetir uma proposta já discutida.',reason:'Participar da conversa com todos.'},'Falar para a roda com uma posição própria, uma resposta específica ou uma observação do momento.');
+  if(circle.length>=3&&(meeting||!afterMeeting&&!conversationTired)){
     const latestGroupMessage=dialogue.slice().reverse().find(message=>message.from_npc_id!==self.id&&message.participants?.length===circle.length&&circle.every(person=>message.participants.includes(person.id))&&Date.now()-new Date(message.created_at).getTime()<90_000);
     if(latestGroupMessage)add('reply_group','say_to_group',{replyToMessageId:Number(latestGroupMessage.id),topic:`Responder diretamente à fala de ${latestGroupMessage.speaker_name}.`,reason:`Responder a ${latestGroupMessage.speaker_name} diante da roda.`},`Responder diretamente à mensagem de ${latestGroupMessage.speaker_name}: “${safeText(latestGroupMessage.content,130)}”. O grupo verá a mensagem citada e ${latestGroupMessage.speaker_name} será avisado.`);
   }
@@ -244,7 +255,8 @@ export async function makeDecision(npcId:string) {
   const rows=await db<Row[]>`SELECT * FROM npc_state WHERE mode<>'departed' ORDER BY id`;
   const self=rows.find(row=>row.id===npcId);if(!self)return;
   if(self.mode==='sleeping')return;
-  const [pendingDialogue]=await db<PendingDialogue[]>`SELECT n.id,n.dialogue_message_id,m.from_npc_id,m.to_npc_id,m.speaker_name,m.content,m.participants
+  if(self.stamina<=5||self.sleep_on_arrival)return;
+  const [pendingDialogue]=await db<PendingDialogue[]>`SELECT n.id,n.dialogue_message_id,m.from_npc_id,m.to_npc_id,m.speaker_name,m.content,m.participants,m.world_day,m.world_hour,m.world_minute
     FROM npc_notifications n JOIN dialogue_messages m ON m.id=n.dialogue_message_id
     WHERE n.npc_id=${npcId} AND n.conversation_response IS NULL AND n.dialogue_message_id IS NOT NULL
     ORDER BY (m.to_npc_id=${npcId}) DESC,n.id ASC LIMIT 1`;
@@ -478,6 +490,7 @@ async function speak(fromId:string,toId:string|null,topic:string,venting=false,s
   const rows=await db<Row[]>`SELECT * FROM npc_state WHERE mode<>'departed' ORDER BY id`;
   const speaker=rows.find(row=>row.id===fromId),listener=toId?rows.find(row=>row.id===toId):null;
   if(!speaker||toId&&!listener)throw new Error('A outra pessoa não está disponível.');
+  if(speaker.stamina<=5||speaker.sleep_on_arrival)throw new Error('Precisa dormir antes de continuar a conversa.');
   if(listener&&Math.hypot(speaker.x-listener.x,speaker.z-listener.z)>2)throw new Error('A outra pessoa já está longe demais para ouvir.');
   const circle=conversationCircle(rows,fromId);
   if(circle.length<2||!toId&&circle.length<3)throw new Error('Não há pessoas perto para ouvir.');
@@ -512,6 +525,8 @@ async function speak(fromId:string,toId:string|null,topic:string,venting=false,s
   const {day,hour,minute}=await getWorldClock();
   const preservedJourneys=new Set<string>();
   const saved=await db.begin(async tx=>{
+    const [energy]=await tx`SELECT stamina,sleep_on_arrival FROM npc_state WHERE id=${fromId} FOR UPDATE`;
+    if(!energy||Number(energy.stamina)<=5||energy.sleep_on_arrival)throw new Error('Precisa dormir antes de continuar a conversa.');
     const [message]=await tx`INSERT INTO dialogue_messages(world_day,world_hour,world_minute,from_npc_id,to_npc_id,speaker_name,content,participants,reply_to_message_id) VALUES (${day},${hour},${minute},${fromId},${toId},${speaker.name},${content},${tx.json(participants)},${reply?.id??null}) RETURNING id,created_at`;
     for(const id of participants)await tx`INSERT INTO npc_memory_events(npc_id,kind,subject,summary,importance,world_day) VALUES (${id},'conversation',${participants.join(':')},${`${speaker.name} disse: ${safeText(content,230)}`},1,${day}) ON CONFLICT (npc_id,kind,subject,world_day) DO UPDATE SET summary=EXCLUDED.summary,created_at=now()`;
     if(toId||reply)await tx`INSERT INTO npc_conversation_waits(message_id,sender_id,recipient_id,deadline_at) VALUES (${message.id},${fromId},${toId??reply.from_npc_id},now()+interval '30 seconds')`;
@@ -526,10 +541,10 @@ async function speak(fromId:string,toId:string|null,topic:string,venting=false,s
       const preserveJourney=Boolean(invitedJourney);
       if(preserveJourney)preservedJourneys.add(person.id);
       await tx`UPDATE npc_state SET next_thought_at=NULL,
-        goal_x=CASE WHEN ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN goal_x ELSE NULL END,
-        goal_z=CASE WHEN ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN goal_z ELSE NULL END,
-        goal_person_id=CASE WHEN ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN goal_person_id ELSE NULL END,
-        mode=CASE WHEN ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN mode WHEN mode IN ('walking','following','resting') THEN 'wandering' ELSE mode END,
+        goal_x=CASE WHEN sleep_on_arrival OR ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN goal_x ELSE NULL END,
+        goal_z=CASE WHEN sleep_on_arrival OR ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN goal_z ELSE NULL END,
+        goal_person_id=CASE WHEN sleep_on_arrival OR ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN goal_person_id ELSE NULL END,
+        mode=CASE WHEN sleep_on_arrival OR ${preserveJourney} OR (${hour===12} AND mode='walking' AND goal_z=0 AND goal_x BETWEEN -2 AND 2) THEN mode WHEN mode IN ('walking','following','resting') THEN 'wandering' ELSE mode END,
         updated_at=now() WHERE id=${person.id}`;
       if(!reply)await tx`UPDATE npc_conversation_waits AS w SET resolved_at=now() FROM dialogue_messages AS original WHERE original.id=w.message_id AND w.sender_id=${person.id} AND original.participants @> ${tx.json([fromId])} AND w.resolved_at IS NULL`;
     }
