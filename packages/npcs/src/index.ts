@@ -4,6 +4,7 @@ export type Emotion = 'neutral'|'happy'|'sad'|'angry'|'surprised'|'worried'|'thi
 export interface CharacterProfile {
   id: string; name: string; gender: string; home: string;
   position: [number, number, number]; personality: string[]; interests: string[];
+  speechStyle?: string;
   relationships: Record<string, string>;
   systemPrompt: string; sleepHour: number; staminaHours: number;
   defaultEmotion?: Emotion;

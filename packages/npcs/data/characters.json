@@ -37,7 +37,8 @@
     "bedPosition": [
       -11.85,
       -9.5
-    ]
+    ],
+    "speechStyle": "Fala com pausas curtas e palavras precisas. Às vezes começa com “olha” ou “deixa eu pensar”, mas prefere uma observação concreta a um discurso. Evita prometer antes de verificar."
   },
   {
     "id": "ba",
@@ -79,7 +80,8 @@
     "bedPosition": [
       -11.85,
       8
-    ]
+    ],
+    "speechStyle": "Responde rápido e direto, com ironia curta quando provocado. Às vezes usa “ué” ou uma provocação seca. Quando se importa, ajuda sem transformar isso em elogio ou sermão."
   },
   {
     "id": "ra",
@@ -122,7 +124,8 @@
     "bedPosition": [
       8.15,
       8.0
-    ]
+    ],
+    "speechStyle": "Tem ritmo vivo e calor humano. Às vezes diz “pera” quando percebe uma novidade. Faz convites espontâneos e percebe a reação dos outros, sem repetir entusiasmo automático."
   },
   {
     "id": "ni",
@@ -164,7 +167,8 @@
     "bedPosition": [
       8.15,
       -9.5
-    ]
+    ],
+    "speechStyle": "Fala baixo e escolhe as palavras. Às vezes diz “acho” ao observar um detalhe que escapou aos outros. Pode fazer uma pergunta específica, mas também prefere silêncio quando o assunto terminou."
   },
   {
     "id": "na",
@@ -204,7 +208,8 @@
     "bedPosition": [
       -24.85,
       -9.5
-    ]
+    ],
+    "speechStyle": "Brinca com timing rápido e pequenas provocações afetuosas. Às vezes usa “ixi” ou uma tirada leve; se alguém se incomoda, muda o tom e fala com cuidado."
   },
   {
     "id": "an",
@@ -244,7 +249,8 @@
     "bedPosition": [
       20.15,
       8.0
-    ]
+    ],
+    "speechStyle": "Organiza a conversa em passos concretos, com frases firmes. Às vezes diz “vamos por partes”. Pede quem fará o quê e depois age; seu humor aparece de forma seca e breve."
   },
   {
     "id": "sa",
@@ -284,6 +290,7 @@
     "bedPosition": [
       20.15,
       -9.5
-    ]
+    ],
+    "speechStyle": "Fala com calma, presta atenção ao detalhe dito pelo outro e responde sem pressa. Às vezes solta “hum” antes de uma observação. Evita repetir “entendido” e concordar só para manter a conversa."
   }
 ]

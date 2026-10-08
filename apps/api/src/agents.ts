@@ -15,7 +15,7 @@ import { decideAgreement, proposeAgreement } from './agreements';
 import { CHAINED_GOBLIN, EXPLORE_SITES } from '@theote/npcs/worldLayout';
 import { exploreSite } from './exploration';
 import { recall } from './memory';
-import { talkToGoblin } from './goblin';
+import { considerGoblinTorment, talkToGoblin } from './goblin';
 import { createInvitation, decideTravel, respondInvitation } from './invitations';
 import { ANIMALS, animalPosition, type AnimalSpec } from '@theote/npcs/animals';
 
@@ -25,7 +25,7 @@ const EMOTIONS=['neutral','happy','sad','angry','surprised','worried','thinking'
 type Candidate={id:string;action:string;args:Record<string,unknown>;description:string};
 type VisibleAnimal={spec:AnimalSpec;x:number;z:number;flying:boolean;distance:number};
 type Row={id:string;name:string;home_id:string;profile:any;x:number;z:number;goal_x:number|null;goal_z:number|null;goal_person_id:string|null;mode:string;sleep_on_arrival:boolean;emotion:string;stamina:number;hunger:number;thirst:number;coins:number;next_thought_at:Date|string|null};
-type PendingDialogue={id:number;dialogue_message_id:number;from_npc_id:string;to_npc_id:string|null;speaker_name:string;content:string;participants:string[]};
+type PendingDialogue={id:number;dialogue_message_id:number;from_npc_id:string|null;to_npc_id:string|null;speaker_name:string;content:string;participants:string[]};
 const bounded=(value:unknown)=>{
   if(typeof value!=='number'||!Number.isFinite(value))throw new Error('A caminhada precisa de coordenadas numéricas válidas.');
   return Math.max(-20,Math.min(20,value));
@@ -57,6 +57,25 @@ function findPerson(rows:Row[],value:unknown):Row|undefined {
 }
 
 async function handlePendingDialogue(self:Row,rows:Row[],pending:PendingDialogue) {
+  if(pending.speaker_name==='Duende') {
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(new Error('A decisão sobre o duende passou de 25 segundos.')),25_000);
+    activeThoughts.set(self.id,controller);
+    try {
+      await considerGoblinTorment(self.id,Number(pending.dialogue_message_id),controller.signal);
+      await db`UPDATE npc_notifications SET conversation_response='considered',delivered_at=now() WHERE id=${pending.id} AND conversation_response IS NULL`;
+      await db`UPDATE npc_state SET last_decision_at=now(),updated_at=now() WHERE id=${self.id}`;
+    } catch(error) {
+      if(!controller.signal.aborted||!/Nova mensagem|Atenção: alguém chegou perto/.test(String(controller.signal.reason))) {
+        console.error(`[Theote] decisão sobre o duende de ${self.id}:`,error);
+        await db`UPDATE npc_state SET next_thought_at=now()+interval '8 seconds' WHERE id=${self.id}`;
+      }
+    } finally {
+      clearTimeout(timer);
+      if(activeThoughts.get(self.id)===controller)activeThoughts.delete(self.id);
+    }
+    return;
+  }
   const sender=rows.find(person=>person.id===pending.from_npc_id);
   if(!sender||sender.mode==='departed') {
     await db`UPDATE npc_notifications SET conversation_response='unavailable',delivered_at=now() WHERE id=${pending.id} AND conversation_response IS NULL`;
@@ -228,7 +247,7 @@ export async function makeDecision(npcId:string) {
   const [pendingDialogue]=await db<PendingDialogue[]>`SELECT n.id,n.dialogue_message_id,m.from_npc_id,m.to_npc_id,m.speaker_name,m.content,m.participants
     FROM npc_notifications n JOIN dialogue_messages m ON m.id=n.dialogue_message_id
     WHERE n.npc_id=${npcId} AND n.conversation_response IS NULL AND n.dialogue_message_id IS NOT NULL
-    ORDER BY (m.to_npc_id=${npcId}) DESC,n.id DESC LIMIT 1`;
+    ORDER BY (m.to_npc_id=${npcId}) DESC,n.id ASC LIMIT 1`;
   if(pendingDialogue) {
     await handlePendingDialogue(self,rows,pendingDialogue);
     return;
@@ -248,8 +267,11 @@ export async function makeDecision(npcId:string) {
   const inventory=Object.fromEntries(inventoryRows.map(row=>[row.item_id,Number(row.quantity)])) as Record<string,number>;
   const exploredRows=await db`SELECT site_id FROM npc_explorations WHERE npc_id=${npcId}`;
   const explored=new Set<string>(exploredRows.map(row=>String(row.site_id)));
-  const decisions=await db`SELECT action,arguments,outcome,world_day,created_at FROM npc_decisions WHERE npc_id=${npcId} ORDER BY id DESC LIMIT 40`;
-  const dialogue=await db`SELECT id,from_npc_id,participants,speaker_name,content,world_day,created_at FROM dialogue_messages WHERE participants @> ${db.json([npcId])} ORDER BY id DESC LIMIT 12`;
+  const decisions=await db`SELECT action,arguments,outcome,world_day,created_at FROM npc_decisions WHERE npc_id=${npcId}
+    AND (action<>'consider_goblin_claim' OR arguments->>'remembered'='true') ORDER BY id DESC LIMIT 40`;
+  const dialogue=await db`SELECT m.id,m.from_npc_id,m.participants,m.speaker_name,m.content,m.world_day,m.created_at
+    FROM dialogue_messages m LEFT JOIN goblin_torments t ON t.message_id=m.id OR t.message_id=m.reply_to_message_id
+    WHERE m.participants @> ${db.json([npcId])} AND (t.message_id IS NULL OR t.remembered=true) ORDER BY m.id DESC LIMIT 12`;
   const agreements=await db`SELECT a.id,a.proposer_id,a.recipient_id,a.source_message_id,a.terms,a.status,a.created_at,p.name AS proposer_name,r.name AS recipient_name FROM npc_agreements a JOIN npc_state p ON p.id=a.proposer_id JOIN npc_state r ON r.id=a.recipient_id WHERE a.proposer_id=${npcId} OR a.recipient_id=${npcId} ORDER BY a.id DESC LIMIT 20`;
   const invitations=await db`SELECT i.*,p.response,p.travel_decision,h.name AS host_name FROM conversation_invitations i JOIN conversation_invitees p ON p.invitation_id=i.id JOIN npc_state h ON h.id=i.host_id WHERE p.npc_id=${npcId} ORDER BY i.id DESC LIMIT 20`;
   const seenChoices=new Set<string>();
@@ -474,7 +496,7 @@ async function speak(fromId:string,toId:string|null,topic:string,venting=false,s
   const {day:currentDay,hour:currentHour,minute:currentMinute}=await getWorldClock();
   const closePlaces=landmarks.filter(place=>Math.hypot(place.x-speaker.x,place.z-speaker.z)<=5).sort((a,b)=>Math.hypot(a.x-speaker.x,a.z-speaker.z)-Math.hypot(b.x-speaker.x,b.z-speaker.z)).slice(0,3).map(place=>place.name);
   const messages:ChatMessage[]=[
-    {role:'system',content:`${cardial.identityPrompt}\n\nA história que você conhece: ${worldStory} Ela é parte da sua vida, mas não precisa virar o assunto de toda conversa.\n\nLembranças: ${memory?.summary||'Vocês ainda estão começando a viver neste vale.'} Episódios marcantes: ${learned.text}. Suas opiniões atuais: ${learned.beliefs}. Descobertas suas: ${learned.discoveries}. Você tem ${speaker.coins} moeda(s) agora. ${writtenContext} Você sabe que sua fome está em ${speaker.hunger.toFixed(4)}% e sua sede em ${speaker.thirst.toFixed(4)}%. Pode falar do saldo e pedir moedas a quem estiver perto. Seu estado agora: ${inner.affect.mood}; ${Number(inner.affect.pressure)>=55?'há sentimentos acumulados que podem aparecer se o assunto tocar nisso':'sem necessidade de desabafar'}. Sua personalidade orienta seu jeito, mas não precisa virar o assunto de toda conversa. Fale em português cotidiano, como alguém conversando ao vivo: uma ou duas frases curtas, até 190 caracteres. Entre direto no assunto: não comece com bom dia, boa tarde, boa noite, oi, elogio automático ou o nome da pessoa. Responda ao detalhe específico da fala mais recente, sem repetir a proposta com outras palavras. Você pode discordar, pedir um detalhe, assumir uma tarefa possível, lembrar um fato real ou encerrar o assunto. Não termine toda fala com pergunta e não proponha mais objetos ou atividades só para manter a conversa. Se o grupo já concordou, avance para uma ação real ou deixe o tema descansar. Não transforme tudo em metáfora, lição de vida ou debate filosófico. Não concorde por hábito nem provoque sem motivo. Pode usar humor quando couber; evite emoji frequente. Só afirme como acontecimento o que está nas falas compartilhadas, nos fatos recentes ou na história comum. Não invente acontecimentos novos; você pode falar de hipótese ou plano usando “e se”, “talvez” ou “vamos”. Escreva somente sua fala, sem narração nem aspas. Não mencione modelos, ferramentas nem uma simulação.`},
+    {role:'system',content:`${cardial.identityPrompt}\n\nA história que você conhece: ${worldStory} Ela é parte da sua vida, mas não precisa virar o assunto de toda conversa.\n\nLembranças: ${memory?.summary||'Vocês ainda estão começando a viver neste vale.'} Episódios marcantes: ${learned.text}. Suas opiniões atuais: ${learned.beliefs}. Descobertas suas: ${learned.discoveries}. Você tem ${speaker.coins} moeda(s) agora. ${writtenContext} Você sabe que sua fome está em ${speaker.hunger.toFixed(4)}% e sua sede em ${speaker.thirst.toFixed(4)}%. Pode falar do saldo e pedir moedas a quem estiver perto. Seu estado agora: ${inner.affect.mood}; ${Number(inner.affect.pressure)>=55?'há sentimentos acumulados que podem aparecer se o assunto tocar nisso':'sem necessidade de desabafar'}. Seu jeito próprio de falar: ${speaker.profile.speechStyle??speaker.profile.personality.join(", ")}. Use seus cacoetes só quando couber; não repita a mesma expressão em falas seguidas. Fale em português cotidiano, como alguém conversando ao vivo: uma ou duas frases curtas, até 190 caracteres. Entre direto no assunto: não comece com bom dia, boa tarde, boa noite, oi, elogio automático ou o nome da pessoa. Responda ao detalhe específico da fala mais recente, sem repetir a proposta com outras palavras. Você pode discordar, pedir um detalhe, assumir uma tarefa possível, lembrar um fato real ou encerrar o assunto. Não termine toda fala com pergunta e não proponha mais objetos ou atividades só para manter a conversa. Se o grupo já concordou, avance para uma ação real ou deixe o tema descansar. Não transforme tudo em metáfora, lição de vida ou debate filosófico. Não concorde por hábito nem provoque sem motivo. Pode usar humor quando couber; evite emoji frequente. Só afirme como acontecimento o que está nas falas compartilhadas, nos fatos recentes ou na história comum. Não invente acontecimentos novos; você pode falar de hipótese ou plano usando “e se”, “talvez” ou “vamos”. Escreva somente sua fala, sem narração nem aspas. Não mencione modelos, ferramentas nem uma simulação.`},
     {role:'user',content:`Agora é dia ${currentDay}, ${String(currentHour).padStart(2,'0')}:${String(currentMinute).padStart(2,'0')}. Você está com ${listeners.map(person=>person.name).join(', ')}. ${circle.length>=3?'Todos na roda ouvem.':'Vocês dois podem se ouvir.'} ${closePlaces.length?`Lugares próximos: ${closePlaces.join(', ')}.`:'Você está entre os caminhos do vale.'}\nVocê sabe as posições exatas agora: ${rows.map(person=>`${person.name} (x=${person.x}, z=${person.z})`).join('; ')}.\n\nCoisas que estas pessoas fizeram recentemente:\n${recentEvents.length?recentEvents.reverse().map(event=>`- ${event.name}: ${event.outcome}`).join('\n'):'- Nenhum acontecimento novo registrado.'}\n\nFalas que todos os presentes realmente ouviram, da mais antiga para a mais nova:\n${recent||'Ainda não disseram nada nesta conversa.'}\n\n${reply?`Você escolheu responder diretamente à mensagem de ${reply.speaker_name}: “${reply.content}”. Ela será citada no chat, e ${reply.speaker_name} será avisado. Responda ao conteúdo dessa fala.\n`:''}${venting?'Você decidiu contar algo que vinha guardando. Fale com sinceridade, sem dramatizar.':'Você decidiu falar agora.'} Sua intenção era: ${safeText(topic,240)}. Essa intenção é só uma pista, não uma frase a repetir. Se houver uma fala recente, responda a ela sem saudação e sem recapitular toda a conversa. Se a mesma ideia apareceu várias vezes, mude para um detalhe prático que exista neste mundo, diga que não há mais o que decidir ou pare de falar sobre ela. Não invente ferramentas, suprimentos, lugares, preparativos ou planos já acertados. Se não houver fala recente, observe algo que você realmente vê ou sente agora.`},
   ];
   let result=await completeConversation({npcId:fromId,maxTokens:512,signal,messages});
@@ -533,8 +555,10 @@ export async function summarizeClosedDays() {
   for(const npc of await db`SELECT id,name,profile FROM npc_state ORDER BY id`) {
     const [memory]=await db`SELECT summary,last_summarized_day FROM npc_memories WHERE npc_id=${npc.id}`;
     if(Number(memory.last_summarized_day)>=completedDay)continue;
-    const decisions=await db`SELECT action,outcome FROM npc_decisions WHERE npc_id=${npc.id} AND world_day=${completedDay} AND action NOT IN ('continue_journey','rest','decision_error') ORDER BY id`;
-    const conversations=await db`SELECT speaker_name,content FROM dialogue_messages WHERE world_day=${completedDay} AND participants @> ${db.json([npc.id])} ORDER BY id`;
+    const decisions=await db`SELECT action,outcome FROM npc_decisions WHERE npc_id=${npc.id} AND world_day=${completedDay}
+      AND action NOT IN ('continue_journey','rest','decision_error') AND (action<>'consider_goblin_claim' OR arguments->>'remembered'='true') ORDER BY id`;
+    const conversations=await db`SELECT m.speaker_name,m.content FROM dialogue_messages m LEFT JOIN goblin_torments t ON t.message_id=m.id OR t.message_id=m.reply_to_message_id
+      WHERE m.world_day=${completedDay} AND m.participants @> ${db.json([npc.id])} AND (t.message_id IS NULL OR t.remembered=true) ORDER BY m.id`;
     const choices=[...new Set(decisions.map(d=>`${d.action}: ${d.outcome}`))].slice(-8);
     const exchanges=conversations.slice(-10).map(c=>`${c.speaker_name}: ${safeText(c.content,120)}`);
     if(choices.length||exchanges.length) {

@@ -5,6 +5,7 @@ import { aiEnabled, getBudgetStatus } from './openrouter';
 import { addClient, broadcast, removeClient } from './realtime';
 import { listAgreements } from './agreements';
 import { listInvitations } from './invitations';
+import { listGoblinTorments } from './goblin';
 
 const port=Number(process.env.PORT??3001);
 const profiles=await Bun.file(new URL('../../../packages/npcs/data/characters.json',import.meta.url)).json() as Array<{id:string;name:string;home:string;position:number[];personality:string[];appearance:unknown}>;
@@ -94,6 +95,7 @@ const server=Bun.serve({hostname,port,websocket:{
     }
     if(request.method==='GET'&&path==='/api/agreements')return json(await listAgreements());
     if(request.method==='GET'&&path==='/api/invitations')return json(await listInvitations(url.searchParams.get('npc')??undefined));
+    if(request.method==='GET'&&path==='/api/goblin/torments')return json(await listGoblinTorments());
     if(request.method==='GET'&&path==='/api/usage')return json(await getUsage(url));
     return json({error:'Não encontrado.'},404);
   } catch(error) {

@@ -8,6 +8,7 @@ import { CardialService } from './cardial';
 import { elapsedSecondsForWorldTime, worldHoursAtElapsed } from '@theote/npcs/worldClock';
 import { advanceOnRoute, isWalkable, segmentWalkable } from '@theote/npcs/navigation';
 import { updateInvitations } from './invitations';
+import { maybeSendGoblinTorment } from './goblin';
 
 type MovingNpc={id:string;name:string;profile:any;x:number;z:number;goal_x:number|null;goal_z:number|null;goal_person_id:string|null;mode:string;sleep_on_arrival:boolean;stamina:number;hunger:number;thirst:number;last_stamina_at:Date;last_wake_day:number;planned_wake_at:Date|null;next_thought_at:Date|null;version:string};
 const home=Object.fromEntries(houses.map(house=>[house.id,house.entrance])) as Record<string,[number,number]>;
@@ -160,6 +161,7 @@ export async function startScheduler() {
   if(stopped){void lock`SELECT pg_advisory_unlock(480018)`.finally(()=>lock.release());return;}
   console.info(`[Theote] Ciclo de mundo iniciado. IA ${schedulerReady()?'habilitada':'pausada até configurar chave e orçamento'}.`);
   const movement=setInterval(()=>void updateSimulation().catch(error=>console.error('[Theote] simulação:',error)),1000);
+  const goblinTimer=setInterval(()=>{if(schedulerReady())void maybeSendGoblinTorment().then(id=>{if(id)interruptThought(id,'O duende chamou você.');}).catch(error=>console.error('[Theote] tormento do duende:',error));},30_000);
   let timeout:ReturnType<typeof setTimeout>;
   const nextDecision=async()=>{
     if(stopped)return;
@@ -190,7 +192,7 @@ export async function startScheduler() {
     timeout=setTimeout(nextDecision,pending?100:Number.isFinite(wakeDelay)?Math.max(250,Math.min(regularDelay,wakeDelay*1000)):regularDelay);
   };
   void updateSimulation();void nextDecision();
-  stopActive=()=>{clearInterval(movement);clearTimeout(timeout);void lock`SELECT pg_advisory_unlock(480018)`.finally(()=>lock.release());};
+  stopActive=()=>{clearInterval(movement);clearInterval(goblinTimer);clearTimeout(timeout);void lock`SELECT pg_advisory_unlock(480018)`.finally(()=>lock.release());};
   };
   await tryStart();
   return()=>{stopped=true;clearTimeout(retryTimer);stopActive();};

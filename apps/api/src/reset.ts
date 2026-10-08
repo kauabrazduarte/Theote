@@ -5,7 +5,7 @@ import { elapsedSecondsForWorldTime } from '@theote/npcs/worldClock';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL não foi configurada.');
 await initializeDatabase();
 await db.begin(async tx => {
-  await tx`TRUNCATE ai_cost_reservations,conversation_invitees,conversation_invitations,npc_beliefs,npc_explorations,npc_memory_events,npc_agreements,npc_item_events,npc_inventory,npc_social_interactions,npc_coin_events,npc_conversation_waits,npc_proximity,npc_notifications,npc_feeling_events,npc_decisions,dialogue_messages RESTART IDENTITY CASCADE`;
+  await tx`TRUNCATE ai_cost_reservations,conversation_invitees,conversation_invitations,npc_beliefs,npc_explorations,npc_memory_events,npc_agreements,npc_item_events,npc_inventory,npc_social_interactions,npc_coin_events,npc_conversation_waits,npc_proximity,npc_notifications,npc_feeling_events,npc_decisions,goblin_torments,dialogue_messages RESTART IDENTITY CASCADE`;
   await tx`UPDATE npc_memories SET summary='Se eu juntar 1000 moedas, posso pagar para conhecer o mundo exterior. Só eu saio se decidir ir; todos no vale receberão a notícia. A banca do vale vende comida e bebida; posso consumir ou doar o que tenho.',summarized_through_dialogue_id=0,last_summarized_day=0,updated_at=now()`;
   await tx`UPDATE npc_affect SET mood='neutral',pressure=0,valence=0,updated_at=now()`;
   await tx`UPDATE npc_bonds SET warmth=0,trust=40,tension=0,updated_at=now()`;
