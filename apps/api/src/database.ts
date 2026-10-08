@@ -7,7 +7,7 @@ const HOUSES = Object.fromEntries(houses.map(house=>[house.id,house.entrance])) 
 
 export async function initializeDatabase() {
   await db`CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`;
-  const migrationNames=['initial','daily_memory_defaults','agent_thoughts','scheduled_wake','scheduled_thought','meetings_notifications','conversation_waits','group_dialogues','cardial','faster_nights','usage_report_epoch','coins','interaction_progress','late_night_speed','needs_market_departure','coin_spending','group_replies','written_agreements','one_pending_agreement_per_pair','expansion_memory_invitations','catalog_and_need_history','invitation_reminders','village_streets','conversation_attention','goblin_torments'];
+  const migrationNames=['initial','daily_memory_defaults','agent_thoughts','scheduled_wake','scheduled_thought','meetings_notifications','conversation_waits','group_dialogues','cardial','faster_nights','usage_report_epoch','coins','interaction_progress','late_night_speed','needs_market_departure','coin_spending','group_replies','written_agreements','one_pending_agreement_per_pair','expansion_memory_invitations','catalog_and_need_history','invitation_reminders','village_streets','conversation_attention','goblin_torments','world_reset'];
   for(const [index,suffix] of migrationNames.entries()) {
     const version=index+1;
     const [applied]=await db`SELECT 1 FROM schema_migrations WHERE version=${version}`;
